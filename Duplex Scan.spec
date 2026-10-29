@@ -5,7 +5,7 @@ a = Analysis(
     ['app.py'],
     pathex=[],
     binaries=[],
-    datas=[('DuplexScan-Neon.ico', '.')],
+    datas=[('DuplexScan-Neon.ico', '.'), ('DuplexScan-Neon.png', '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

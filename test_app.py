@@ -326,4 +326,39 @@ class ProcessingTests(unittest.TestCase):
         self.assertLess(device.calls.index('layout'),device.calls.index(c.ICAP_AUTOMATICBORDERDETECTION))
 
 
+class FocusWorkspaceTests(unittest.TestCase):
+    def test_batch_controls_and_dialog_lifecycle(self):
+        import tkinter as tk
+        from unittest.mock import patch
+        from app import App
+        from focus_ui import show_page_edits
+        with tempfile.TemporaryDirectory() as folder, patch('app.STATE', Path(folder)):
+            root = tk.Tk()
+            root.withdraw()
+            workspace = App(root)
+            try:
+                root.update_idletasks()
+                self.assertEqual(str(workspace.save_button['state']), 'disabled')
+                self.assertEqual(workspace.dpi.get(), '600')
+                self.assertEqual(float(workspace.margin.get()), .6)
+                workspace.pages = [Page(Path(folder)/'test.png', 600, 'Test')]
+                workspace.listbox.insert('end', 'Test')
+                workspace.listbox.selection_set(0)
+                workspace.update_review_controls()
+                self.assertEqual(str(workspace.save_button['state']), 'normal')
+                show_page_edits(workspace)
+                workspace.edits_window.withdraw()
+                workspace.busy = True
+                workspace.update_review_controls()
+                self.assertTrue(all(str(w['state']) == 'disabled' for w in workspace.page_controls))
+                workspace.busy = False
+                workspace.clear_batch()
+                self.assertEqual(str(workspace.save_button['state']), 'disabled')
+                self.assertEqual(workspace.current_label.get(), 'No scan selected')
+                self.assertTrue(workspace.settings_window.winfo_exists())
+            finally:
+                root.destroy()
+                workspace.session.cleanup()
+
+
 if __name__=='__main__': unittest.main()

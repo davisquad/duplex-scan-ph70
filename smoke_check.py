@@ -22,8 +22,13 @@ def run(report_path):
         root.withdraw()
         photo = ImageTk.PhotoImage(output,master=root)
         assert photo.width() == 80
+        from app import App
+        workspace = App(root)
         root.update_idletasks()
+        assert str(workspace.save_button['state']) == 'disabled'
+        assert workspace.settings_window.winfo_exists()
         root.destroy()
+        workspace.session.cleanup()
         result['ok'] = True
     except Exception as exc:
         result.update(ok=False,error=f'{type(exc).__name__}: {exc}')

@@ -110,19 +110,6 @@ class App:
             pass
         if self.cfg.get('capture_version',0) < 4:
             self.cfg.update(margin=.6,mode='Card outline',crop=True,deskew=True)
-        root.title('Duplex Scan 1.7.0 • PH70 • Scan gallery')
-        root.geometry('1220x820')
-        root.minsize(1020, 710)
-        root.configure(bg='#f3f5fa')
-        style = ttk.Style()
-        style.theme_use('clam')
-        style.configure('.', font=('Segoe UI', 10), background='#f3f5fa', foreground='#17243b')
-        style.configure('TButton', padding=(12, 8))
-        style.configure('Primary.TButton', background='#2463eb', foreground='white', font=('Segoe UI', 11, 'bold'))
-        style.map('Primary.TButton', background=[('active', '#174ac0'), ('disabled', '#9baac5')])
-        style.configure('Title.TLabel', font=('Segoe UI', 24, 'bold'))
-        style.configure('Small.TLabel', font=('Segoe UI', 9), foreground='#637087')
-        style.configure('Section.TLabel', font=('Segoe UI', 11, 'bold'))
         self.driver = tk.StringVar(value=self.cfg.get('driver', 'twain'))
         self.device = tk.StringVar(value=self.cfg.get('device', 'Visioneer Patriot PH70'))
         self.dpi = tk.StringVar(value=self.cfg.get('dpi', '600'))
@@ -139,95 +126,24 @@ class App:
         self.status = tk.StringVar(value='Ready. Load your pages, then choose Scan pages.')
         self.details = tk.StringVar(value='Your preview will appear here.')
         self.count = tk.StringVar(value='No pages yet')
-        header = ttk.Frame(root, padding=(24, 18, 24, 12))
-        header.pack(fill='x')
-        ttk.Label(header, text='Duplex Scan', style='Title.TLabel').pack(side='left')
-        ttk.Label(header, text='1  SCAN     →     2  REVIEW     →     3  SAVE', style='Small.TLabel').pack(side='right')
-        body = ttk.Frame(root, padding=(20, 0, 20, 12))
-        body.pack(fill='both', expand=True)
-        settings = ttk.Frame(body, width=260, padding=(0, 4, 18, 0))
-        settings.pack(side='left', fill='y')
-        settings.pack_propagate(False)
-        ttk.Label(settings, text='Scanner', style='Section.TLabel').pack(anchor='w')
-        self.device_combo = self.combo(settings, self.device, (), width=28)
-        row = ttk.Frame(settings); row.pack(fill='x', pady=(0, 8))
-        self.combo(row, self.driver, ['twain', 'wia'], side='left', width=8)
-        self.button(row, 'Refresh', self.refresh, side='right')
-        self.label_combo(settings, 'Sides', self.source, ['Both sides (duplex)', 'Front side only'])
-        self.label_combo(settings, 'Resolution', self.dpi, ['200', '300', '400', '600'])
-        self.label_combo(settings, 'Paper size', self.size, ['Letter', 'A4', 'Legal', '4 × 6 in', '5 × 7 in', '8 × 10 in'])
-        self.label_combo(settings, 'Color', self.color, ['Color', 'Grayscale', 'Black & white'])
-        flip = ttk.Checkbutton(settings, text='Rotate new scans 180°', variable=self.scan_flip)
-        flip.pack(anchor='w', pady=(0, 3)); self.controls.append(flip)
-        self.button(settings, 'Scan pages', self.scan, style='Primary.TButton', fill='x', pady=(8, 4))
-        self.button(settings, 'Import images / TIFF', self.import_images, fill='x')
-        ttk.Separator(settings).pack(fill='x', pady=14)
-        ttk.Label(settings, text='Automatic finishing', style='Section.TLabel').pack(anchor='w')
-        for text, var in [('Correct skew', self.deskew), ('Auto crop', self.autocrop)]:
-            check = ttk.Checkbutton(settings, text=text, variable=var, command=self.changed)
-            check.pack(anchor='w', pady=3); self.controls.append(check)
-        self.combo(settings, self.mode, ['Card outline', 'Content + space'])
-        ttk.Label(settings, text='Final gap outside card (mm)').pack(anchor='w', pady=(6, 2))
-        spin = ttk.Spinbox(settings, from_=0, to=25, increment=.1, textvariable=self.margin, width=8, command=self.changed)
-        spin.pack(anchor='w'); self.controls.append(spin)
-        spin.bind('<Return>', lambda e:self.changed()); spin.bind('<FocusOut>', lambda e:self.changed())
-        self.mode.trace_add('write', lambda *a:self.changed())
-        ttk.Label(settings, text='Wide capture → 5 mm working surround\n→ straighten → final card-edge crop.\nOriginal scans stay available until close.',
-                  style='Small.TLabel', wraplength=225).pack(anchor='w', pady=(10,0))
-        review = ttk.Frame(body); review.pack(side='left', fill='both', expand=True)
-        actions = ttk.Frame(review); actions.pack(fill='x', pady=(0, 8))
-        ttk.Label(actions, textvariable=self.count, style='Section.TLabel').pack(side='left')
-        self.button(actions, 'Save JPEGs', self.save, side='right', style='Primary.TButton')
-        self.button(actions, 'New batch', self.new_batch, side='right', padx=6)
-        panel = ttk.Frame(review); panel.pack(fill='both', expand=True)
-        rail = ttk.Frame(panel, width=148)
-        self.listbox = tk.Listbox(rail, width=17, bg='white', fg='#23324d', relief='flat',
-                                  selectbackground='#dce8ff', selectforeground='#173d85',
-                                  font=('Segoe UI', 11), activestyle='none', exportselection=False)
-        self.listbox.pack(side='left', fill='y')
-        scroll = ttk.Scrollbar(rail, command=self.listbox.yview); scroll.pack(side='right', fill='y')
-        self.listbox.configure(yscrollcommand=scroll.set)
-        self.listbox.bind('<<ListboxSelect>>', self.select_page)
-        self.canvas = tk.Canvas(panel, bg='#e4e9f1', highlightthickness=0)
-        self.canvas.pack(fill='both', expand=True)
-        self.canvas.bind('<Configure>', lambda e:self.schedule_preview())
-        self.canvas.bind('<ButtonPress-1>', self.crop_begin)
-        self.canvas.bind('<B1-Motion>', self.crop_drag)
-        self.canvas.bind('<ButtonRelease-1>', self.crop_end)
-        ttk.Label(review, text='All scans • Click a thumbnail to review', style='Small.TLabel').pack(anchor='w', pady=(8, 3))
-        gallery = ttk.Frame(review); gallery.pack(fill='x')
-        self.grid_canvas = tk.Canvas(gallery, height=156, bg='#edf1f7', highlightthickness=0)
-        self.grid_canvas.pack(side='left', fill='x', expand=True)
-        grid_scroll = ttk.Scrollbar(gallery, command=self.grid_canvas.yview)
-        grid_scroll.pack(side='right', fill='y')
-        self.grid_canvas.configure(yscrollcommand=grid_scroll.set)
-        self.grid_canvas.bind('<Configure>', lambda e:self.draw_grid())
-        self.grid_canvas.bind('<Button-1>', self.grid_select)
-        self.grid_canvas.bind('<MouseWheel>', lambda e:self.grid_canvas.yview_scroll(-int(e.delta/120), 'units'))
-        edits = ttk.Frame(review); edits.pack(fill='x', pady=(8, 4))
-        for title, action in [('↶ 90°', lambda:self.rotate(-90)), ('90° ↷', lambda:self.rotate(90)),
-                              ('180°', lambda:self.rotate(180)),
-                              ('↑ Move', lambda:self.move(-1)), ('↓ Move', lambda:self.move(1)), ('Remove', self.remove)]:
-            self.button(edits, title, action, side='left', padx=(0, 5))
-        edits2 = ttk.Frame(review); edits2.pack(fill='x')
-        toggle = ttk.Checkbutton(edits2, text='Original / draw crop', variable=self.original, command=self.schedule_preview)
-        toggle.pack(side='left'); self.controls.append(toggle)
-        self.button(edits2, 'Reset page edits', self.reset_page, side='left', padx=8)
-        ttk.Label(edits2, text='Fine tilt °').pack(side='left')
-        tilt_spin = ttk.Spinbox(edits2, from_=-15, to=15, increment=.2, width=5, textvariable=self.tilt, command=self.set_tilt)
-        tilt_spin.pack(side='left', padx=6); self.controls.append(tilt_spin)
-        tilt_spin.bind('<Return>', lambda e:self.set_tilt()); tilt_spin.bind('<FocusOut>', lambda e:self.set_tilt())
-        ttk.Label(review, textvariable=self.details, style='Small.TLabel', wraplength=800).pack(anchor='w', pady=(8, 0))
-        footer = ttk.Frame(root, padding=(24, 10)); footer.pack(fill='x')
-        self.progress = ttk.Progressbar(footer, mode='indeterminate', length=90)
-        self.progress.pack(side='left', padx=(0,12))
-        ttk.Label(footer, textvariable=self.status, wraplength=900).pack(side='left')
-        self.stop_button = ttk.Button(footer, text='Stop scan', command=self.stop, state='disabled')
-        self.stop_button.pack(side='right')
+        from focus_ui import build_focus_ui
+        build_focus_ui(self)
         root.protocol('WM_DELETE_WINDOW', self.close)
         root.report_callback_exception = self.ui_error
         root.after(100, self.poll)
         root.after(300, self.refresh)
+
+    def update_review_controls(self):
+        if not hasattr(self, 'save_button'): return
+        count = len(self.pages)
+        self.save_button.configure(text=f'Save {count} JPEGs' if count else 'Save JPEGs',
+                                   state='normal' if count and not self.busy else 'disabled')
+        self.scan_button.configure(text='Scan more' if count else 'Scan pages')
+        index = self.current()
+        self.current_label.set(f'Scan {index+1:02d}' if index is not None else 'No scan selected')
+        self.batch_subtitle.set(f'{count} sides in this batch · Ready for review' if count else 'Load your cards to start a new batch')
+        for widget in self.page_controls:
+            widget.configure(state='normal' if count and not self.busy else 'disabled')
 
     def ui_error(self, kind, value, tb):
         with (STATE/'error.log').open('a', encoding='utf-8') as log:
@@ -281,6 +197,7 @@ class App:
         if index is not None: self.tilt.set(str(self.pages[index].tilt))
         self.schedule_preview()
         self.draw_grid()
+        self.update_review_controls()
 
     def update_pages(self, selected=0):
         self.listbox.delete(0, 'end')
@@ -312,14 +229,14 @@ class App:
         for index, page in enumerate(self.pages):
             x, y = (index%columns)*128, (index//columns)*150
             self.grid_canvas.create_rectangle(x+4,y+4,x+124,y+145,
-                fill='#dce8ff' if index == selected else 'white',
-                outline='#2463eb' if index == selected else '#d3dce8', width=2 if index == selected else 1)
+                fill=self.palette['selected'] if index == selected else self.palette['panel'],
+                outline=self.palette['accent'] if index == selected else self.palette['line'], width=2 if index == selected else 1)
             key = self.grid_key(page)
             photo = self.grid_images.get(key)
             tile = self.grid_canvas.create_image(x+64,y+64,image=photo if photo else '')
-            label = self.grid_canvas.create_text(x+64,y+64,text='' if photo else 'Processing…',fill='#637087')
+            label = self.grid_canvas.create_text(x+64,y+64,text='' if photo else 'Processing…',fill=self.palette['muted'])
             self.grid_slots.setdefault(key, []).append((tile,label))
-            self.grid_canvas.create_text(x+64,y+130,text=f'Scan {index+1:02d}',fill='#17243b',font=('Segoe UI',10))
+            self.grid_canvas.create_text(x+64,y+130,text=f'Scan {index+1:02d}',fill=self.palette['text'],font=('Segoe UI',10))
         self.grid_canvas.configure(scrollregion=(0,0,columns*128,max(150,((len(self.pages)+columns-1)//columns)*150)))
 
     def grid_key(self, page):
@@ -373,7 +290,7 @@ class App:
             self.canvas.delete('all')
             self.canvas.create_text(max(100, self.canvas.winfo_width()/2), max(100, self.canvas.winfo_height()/2),
                 text='A clearer view of every page\n\nScan a batch or import images to begin.',
-                justify='center', font=('Segoe UI', 16), fill='#66758d')
+                justify='center', font=('Segoe UI', 16), fill=self.palette['muted'])
             self.details.set('Scans and edits stay on this computer.')
             self.preview_bounds = None
             return
@@ -416,7 +333,7 @@ class App:
         rendered.thumbnail((width, height), Image.Resampling.LANCZOS)
         x, y = (self.canvas.winfo_width()-rendered.width)/2, (self.canvas.winfo_height()-rendered.height)/2
         self.thumb = ImageTk.PhotoImage(rendered)
-        self.canvas.create_rectangle(x+4, y+4, x+rendered.width+4, y+rendered.height+4, fill='#c0c9d8', outline='')
+        self.canvas.create_rectangle(x+4, y+4, x+rendered.width+4, y+rendered.height+4, fill=self.palette['shadow'], outline='')
         self.canvas.create_image(x, y, image=self.thumb, anchor='nw')
         self.preview_bounds = (x, y, rendered.width, rendered.height) if original else None
         if original and manual:
@@ -499,6 +416,7 @@ class App:
         for widget in self.controls:
             widget.configure(state='readonly' if isinstance(widget, ttk.Combobox) else 'normal')
         self.listbox.configure(state='normal')
+        self.update_review_controls()
 
     def poll(self):
         try:
@@ -530,6 +448,7 @@ class App:
                         match = next((name for name in result if 'PH70' in name.upper()), None)
                         if match: self.device.set(match)
                         elif result and self.device.get() not in result: self.device.set(result[0])
+                        self.connection.set('●  PH70 connected' if match else '●  Scanner available' if result else '○  Scanner offline')
                         self.status.set('PH70 connected. Ready to scan.' if match else 'Choose a scanner.' if result else 'No scanners found. Check power, USB connection, and driver.')
                     elif kind == 'pages':
                         pages, warning = result
