@@ -72,24 +72,29 @@ def export_pages(pages, settings, target, kind, direct=False):
         name = f'{batch} {n:04d}' if direct else f'page-{n:04d}'
         staged = folder/f'.{name}.tmp'
         try:
-            rendered.save(staged, format=kind, dpi=(page.dpi, page.dpi),
-                          **({'quality':95, 'subsampling':0} if kind == 'JPEG' else {}))
+            if isinstance(rendered, bytes):
+                staged.write_bytes(rendered)
+            else:
+                rendered.save(staged, format=kind, dpi=(page.dpi, page.dpi),
+                              **({'quality':95, 'subsampling':0} if kind == 'JPEG' else {}))
             staged.replace(folder/f'{name}.{ext}')
         finally:
             staged.unlink(missing_ok=True)
-            rendered.close()
+            if not isinstance(rendered, bytes): rendered.close()
     if kind == 'JPEG':
         # One writer overlaps encoding/I/O with the next render. At most two
         # export images are live; no unbounded queue of full-resolution pages.
         with ThreadPoolExecutor(max_workers=1, thread_name_prefix='jpeg-save') as writer:
             pending = None
             for n, page in enumerate(pages, 1):
-                rendered, _ = cache.render(page, settings, retain=False, consume=True)
+                rendered = cache.jpeg(page, settings)
+                if rendered is None:
+                    rendered, _ = cache.render(page, settings, retain=False, consume=True)
                 try:
                     if pending is not None: pending.result()
                     pending = writer.submit(write_page, n, page, rendered)
                 except BaseException:
-                    rendered.close()
+                    if not isinstance(rendered, bytes): rendered.close()
                     raise
             if pending is not None: pending.result()
     else:

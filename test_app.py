@@ -22,6 +22,29 @@ def sample(angle=0):
 
 
 class ProcessingTests(unittest.TestCase):
+    def test_prepared_jpeg_invalidates_edits_source_and_respects_budget(self):
+        from render_cache import RenderCache
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);path=root/'page.bmp'
+            Image.new('RGB',(100,150),'red').save(path)
+            page=Page(path,600,'test');settings=Settings(False,False,0)
+            cache=RenderCache(limit=1,jpeg_limit=1400)
+            cache.render(page,settings)[0].close()
+            original=cache.jpeg(page,settings)
+            self.assertIsNotNone(original)
+            self.assertEqual(cache.bytes,0) # JPEG survives pixel eviction.
+            page.rotation=180
+            self.assertIsNone(cache.jpeg(page,settings))
+            cache.render(page,settings)[0].close()
+            self.assertLessEqual(cache.jpeg_bytes,cache.jpeg_limit)
+            self.assertEqual(len(cache.jpegs),1)
+            self.assertIsNone(cache.jpeg(page,Settings(False,False,.6)))
+            Image.new('RGB',(101,150),'blue').save(path)
+            self.assertIsNone(cache.jpeg(page,settings))
+            cache.clear()
+            self.assertEqual(cache.jpeg_bytes,0)
+            self.assertFalse(cache.jpegs)
+
     def test_atomic_file_is_delivered_while_real_capture_process_is_running(self):
         import subprocess, sys
         from backend import stream_capture
@@ -133,7 +156,7 @@ class ProcessingTests(unittest.TestCase):
             for page in pages: cache.render(page,settings)
             with patch('app.cache',cache), patch('render_cache.process',wraps=process) as wrapped:
                 result=Path(export_pages(pages,settings,root/'out','JPEG',direct=True))
-                self.assertEqual(wrapped.call_count,3)
+                self.assertEqual(wrapped.call_count,0)
             outputs=sorted(result.glob('*.jpg'))
             self.assertEqual(len(outputs),6)
             import io
@@ -201,6 +224,7 @@ class ProcessingTests(unittest.TestCase):
                 self.assertEqual(pending.result()[0].getpixel((0,0)),(0,0,255))
             self.assertEqual(cache.bytes,0)
             self.assertFalse(cache.items)
+            self.assertFalse(cache.jpegs)
 
     def test_thumbnail_arrival_updates_only_its_tile(self):
         from app import App
