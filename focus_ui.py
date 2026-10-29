@@ -15,17 +15,15 @@ def system_dark():
         return False
 
 
-def build_focus_ui(app):
+def apply_theme(app):
     root = app.root
-    dark = system_dark()
+    choice = app.appearance.get()
+    dark = choice == 'Dark' or (choice == 'System' and system_dark())
     p = app.palette = ({'bg':'#171b22','panel':'#202630','text':'#edf2fa','muted':'#a4b0c3',
                         'line':'#343e4d','stage':'#12171e','selected':'#263954','shadow':'#080c12'} if dark else
                        {'bg':'#f6f7f9','panel':'#ffffff','text':'#172238','muted':'#647087',
                         'line':'#e3e7ee','stage':'#e9edf2','selected':'#edf3ff','shadow':'#cbd3df'})
     p['accent'] = '#356be6'
-    root.title('Duplex Scan 1.8.0 • Focus workspace')
-    root.geometry('1180x800')
-    root.minsize(960,720)
     root.configure(bg=p['bg'])
     style = ttk.Style(root)
     style.theme_use('clam')
@@ -53,6 +51,23 @@ def build_focus_ui(app):
     style.configure('TSeparator',background=p['line'])
     root.option_add('*TCombobox*Listbox.background',p['panel'])
     root.option_add('*TCombobox*Listbox.foreground',p['text'])
+    if hasattr(app, 'canvas'):
+        app.canvas.configure(bg=p['stage'])
+        app.grid_canvas.configure(bg=p['bg'])
+        app.draw_grid()
+        app.schedule_preview()
+    for name in ('settings_window', 'edits_window'):
+        if hasattr(app, name): getattr(app, name).configure(bg=p['bg'])
+
+
+def build_focus_ui(app):
+    root = app.root
+    root.title('Duplex Scan 1.9.0 • Focus workspace')
+    root.geometry('1180x800')
+    root.minsize(960,720)
+    app.appearance = tk.StringVar(value=app.cfg.get('appearance', 'Light'))
+    apply_theme(app)
+    p = app.palette
     app.connection = tk.StringVar(value='○  Looking for scanner')
     app.current_label = tk.StringVar(value='No scan selected')
     app.batch_subtitle = tk.StringVar(value='Load your cards to start a new batch')
@@ -66,6 +81,9 @@ def build_focus_ui(app):
             app.brand_icon = ImageTk.PhotoImage(source.resize((30,30),Image.Resampling.LANCZOS))
         ttk.Label(chrome,image=app.brand_icon,style='Panel.TLabel').pack(side='left',padx=(0,10))
     ttk.Label(chrome,text='Duplex Scan',style='Brand.TLabel').pack(side='left')
+    appearance = app.combo(chrome,app.appearance,['Light','Dark','System'],side='right',width=8)
+    appearance.bind('<<ComboboxSelected>>',lambda e:apply_theme(app))
+    ttk.Label(chrome,text='Appearance',style='Panel.Small.TLabel').pack(side='right',padx=(18,8))
     ttk.Label(chrome,textvariable=app.connection,style='Panel.Small.TLabel').pack(side='right')
     ttk.Separator(root).pack(fill='x')
 

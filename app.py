@@ -11,6 +11,7 @@ import threading
 import uuid
 import sys
 import traceback
+from concurrent.futures import ThreadPoolExecutor
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from PIL import Image, ImageTk, ImageOps, ImageSequence
@@ -66,8 +67,7 @@ def export_pages(pages, settings, target, kind, direct=False):
     batch = 'Scan '+datetime.now().strftime('%Y-%m-%d %H-%M-%S')+' '+uuid.uuid4().hex[:8]
     folder = target if direct else target/batch
     folder.mkdir(parents=True, exist_ok=direct)
-    for n, page in enumerate(pages, 1):
-        rendered, _ = cache.render(page, settings, retain=False)
+    def write_page(n, page, rendered):
         ext = {'PNG':'png', 'JPEG':'jpg', 'TIFF':'tif'}[kind]
         name = f'{batch} {n:04d}' if direct else f'page-{n:04d}'
         staged = folder/f'.{name}.tmp'
@@ -78,6 +78,24 @@ def export_pages(pages, settings, target, kind, direct=False):
         finally:
             staged.unlink(missing_ok=True)
             rendered.close()
+    if kind == 'JPEG':
+        # One writer overlaps encoding/I/O with the next render. At most two
+        # export images are live; no unbounded queue of full-resolution pages.
+        with ThreadPoolExecutor(max_workers=1, thread_name_prefix='jpeg-save') as writer:
+            pending = None
+            for n, page in enumerate(pages, 1):
+                rendered, _ = cache.render(page, settings, retain=False, consume=True)
+                try:
+                    if pending is not None: pending.result()
+                    pending = writer.submit(write_page, n, page, rendered)
+                except BaseException:
+                    rendered.close()
+                    raise
+            if pending is not None: pending.result()
+    else:
+        for n, page in enumerate(pages, 1):
+            rendered, _ = cache.render(page, settings, retain=False)
+            write_page(n, page, rendered)
     return str(folder)
 
 
@@ -574,7 +592,7 @@ class App:
             messagebox.showinfo('Operation in progress', 'Finish the current operation, or stop the scan before closing.'); return
         if self.dirty and self.pages and not messagebox.askyesno('Unsaved pages', 'Close and discard the unsaved pages or edits?'): return
         try:
-            cfg = {key:getattr(self,key).get() for key in ['driver','device','dpi','source','size','color','margin','mode']}
+            cfg = {key:getattr(self,key).get() for key in ['driver','device','dpi','source','size','color','margin','mode','appearance']}
             cfg.update(crop=self.autocrop.get(), deskew=self.deskew.get(), scan_flip=self.scan_flip.get(),capture_version=4)
             (STATE/'settings.json').write_text(json.dumps(cfg, indent=2))
         except OSError: pass

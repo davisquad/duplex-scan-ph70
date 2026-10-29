@@ -22,6 +22,38 @@ def sample(angle=0):
 
 
 class ProcessingTests(unittest.TestCase):
+    def test_export_takes_cached_image_without_copy_and_clear_cannot_close_it(self):
+        from render_cache import RenderCache
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)/'page.png'
+            Image.new('RGB',(100,150),'red').save(path)
+            page = Page(path,600,'test'); settings = Settings(False,False,0)
+            cache = RenderCache()
+            cache.render(page,settings)[0].close()
+            original = next(iter(cache.items.values()))[0]
+            image,_ = cache.render(page,settings,retain=False,consume=True)
+            self.assertIs(image,original)
+            self.assertEqual(cache.bytes,0)
+            cache.clear()
+            self.assertEqual(image.getpixel((0,0)),(255,0,0))
+            image.close()
+
+    def test_jpeg_writer_failure_keeps_sources_and_cleans_partial_file(self):
+        from unittest.mock import patch
+        from render_cache import RenderCache
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder); path=root/'source.png'
+            Image.new('RGB',(100,150),'red').save(path)
+            pages=[Page(path,600,'first'),Page(path,600,'second')]
+            def fail(image, filename, **kwargs):
+                Path(filename).write_bytes(b'partial')
+                raise OSError('disk full')
+            with patch('app.cache',RenderCache()), patch.object(Image.Image,'save',fail):
+                with self.assertRaisesRegex(OSError,'disk full'):
+                    export_pages(pages,Settings(False,False,0),root/'out','JPEG',direct=True)
+            self.assertTrue(path.exists())
+            self.assertEqual(list((root/'out').iterdir()),[])
+
     def test_export_does_not_evict_pages_it_has_yet_to_save(self):
         from render_cache import RenderCache
         from unittest.mock import patch
@@ -331,7 +363,7 @@ class FocusWorkspaceTests(unittest.TestCase):
         import tkinter as tk
         from unittest.mock import patch
         from app import App
-        from focus_ui import show_page_edits
+        from focus_ui import show_page_edits, apply_theme
         with tempfile.TemporaryDirectory() as folder, patch('app.STATE', Path(folder)):
             root = tk.Tk()
             root.withdraw()
@@ -341,11 +373,18 @@ class FocusWorkspaceTests(unittest.TestCase):
                 self.assertEqual(str(workspace.save_button['state']), 'disabled')
                 self.assertEqual(workspace.dpi.get(), '600')
                 self.assertEqual(float(workspace.margin.get()), .6)
+                self.assertEqual(workspace.appearance.get(), 'Light')
                 workspace.pages = [Page(Path(folder)/'test.png', 600, 'Test')]
                 workspace.listbox.insert('end', 'Test')
                 workspace.listbox.selection_set(0)
                 workspace.update_review_controls()
                 self.assertEqual(str(workspace.save_button['state']), 'normal')
+                for theme,color in [('Dark','#171b22'),('Light','#f6f7f9')]:
+                    workspace.appearance.set(theme)
+                    apply_theme(workspace)
+                    self.assertEqual(workspace.palette['bg'],color)
+                    self.assertEqual(len(workspace.pages),1)
+                    self.assertEqual(workspace.current(),0)
                 show_page_edits(workspace)
                 workspace.edits_window.withdraw()
                 workspace.busy = True
