@@ -1,0 +1,15 @@
+# Explicit allowlist: scans, settings, builds and dependencies stay private.
+/*
+!/.gitignore
+!/README.md
+!/app.py
+!/backend.py
+!/capture.py
+!/card_edges.py
+!/processing.py
+!/render_cache.py
+!/test_app.py
+!/requirements.txt
+!/Duplex Scan.spec
+!/DuplexScan-Neon.ico
+!/DuplexScan-Neon.png

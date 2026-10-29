@@ -1,0 +1,14 @@
+altgraph==0.17.5
+charset-normalizer==3.5.2
+numpy==2.5.4
+opencv-python==5.0.0.93
+packaging==26.3
+pefile==2024.8.26
+pillow==13.0.0
+pyinstaller==6.22.3
+pyinstaller-hooks-contrib==2026.9
+pypdf==6.21.4
+pytwain==2.3.0
+pywin32-ctypes==0.2.3
+reportlab==5.1.0
+setuptools==84.2.1
