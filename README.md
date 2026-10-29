@@ -1,12 +1,13 @@
 # Duplex Scan for the PH70
 
-A local Windows scanning app for the Visioneer Patriot PH70 duplex scanner. Version **1.9.0**.
+A local Windows scanning app for the Visioneer Patriot PH70 duplex scanner. Version **1.10.0**.
 
 ![App icon](DuplexScan-Neon.png)
 
 ## Features
 
 - Duplex scanning with optional 180-degree rotation.
+- Live PH70 page arrival: completed sides appear and start cropping/straightening while the feeder continues. Click thumbnails to review during scanning; saving and editing unlock when capture finishes. Completed sides remain available after a stopped or failed scan.
 - Physical card-edge detection, skew correction, and adjustable space outside the card.
 - Wide hardware capture, a 5 mm working surround, and a final crop preserving real scanned background.
 - Modern Focus workspace with a large preview, batch thumbnails, compact finishing controls, and selectable Light, Dark, or System appearance (Light by default).
@@ -18,7 +19,7 @@ A local Windows scanning app for the Visioneer Patriot PH70 duplex scanner. Vers
 
 ## Install on Windows (no Python required)
 
-**[Download the Windows installer](https://github.com/davisquad/duplex-scan-ph70/releases/latest/download/DuplexScan-Setup-1.9.0-x64.exe)**
+**[Download the Windows installer](https://github.com/davisquad/duplex-scan-ph70/releases/latest/download/DuplexScan-Setup-1.10.0-x64.exe)**
 
 Open the setup file and click **Install**. It installs for your Windows account, creates desktop and Start menu shortcuts, and opens the app. It downloads and verifies the NAPS2 engine automatically (internet required, about 70 MB). No manual extraction, Python installation, or separate NAPS2 setup is needed.
 
@@ -81,7 +82,7 @@ For a local installer build, after the PyInstaller command above:
 & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer/DuplexScan.iss
 ```
 
-Output: `installer-output/DuplexScan-Setup-1.9.0-x64.exe`. NAPS2 is downloaded directly from its official release during installation and checked against a pinned SHA-256 digest. Keep that URL, version, archive size, and digest together when updating the engine.
+Output: `installer-output/DuplexScan-Setup-1.10.0-x64.exe`. NAPS2 is downloaded directly from its official release during installation and checked against a pinned SHA-256 digest. Keep that URL, version, archive size, and digest together when updating the engine.
 
 ## Tests
 
@@ -89,7 +90,7 @@ Output: `installer-output/DuplexScan-Setup-1.9.0-x64.exe`. NAPS2 is downloaded d
 .\.venv\Scripts\python.exe -m unittest test_app -q
 ```
 
-The 25 tests cover edge preservation, skew correction, margins, cache behavior, capture callbacks, image export, and save recovery. Tests use generated images and mocked scanner hardware, not personal scans. Real PH70 capture was separately exercised during development; the recent performance improvements have not been timed through a fresh complete hardware batch.
+The 27 tests cover edge preservation, skew correction, margins, cache behavior, capture callbacks, image export, and save recovery. Tests use generated images and mocked scanner hardware, not personal scans. Real PH70 capture was separately exercised during development; the recent performance improvements have not been timed through a fresh complete hardware batch.
 
 ## Privacy and limitations
 

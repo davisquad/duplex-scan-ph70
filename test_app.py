@@ -22,6 +22,70 @@ def sample(angle=0):
 
 
 class ProcessingTests(unittest.TestCase):
+    def test_atomic_file_is_delivered_while_real_capture_process_is_running(self):
+        import subprocess, sys
+        from backend import stream_capture
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            # A valid bitmap is published exactly like the native capture callback.
+            Image.new('RGB',(20,30),'red').save(root/'.page-0001.partial.bmp')
+            script="import pathlib,sys,time; p=pathlib.Path(sys.argv[1]); (p/'.page-0001.partial.bmp').replace(p/'page-0001.bmp'); time.sleep(1)"
+            worker=subprocess.Popen([sys.executable,'-c',script,folder],stdout=subprocess.PIPE,text=True)
+            received=[]
+            def receive(path):
+                received.append(path)
+                self.assertIsNone(worker.poll())
+            try:
+                stream_capture(worker,root,receive)
+            finally:
+                if worker.poll() is None: worker.kill()
+                worker.wait();worker.stdout.close()
+            self.assertEqual([p.name for p in received],['page-0001.bmp'])
+
+    def test_live_capture_arrives_before_exit_and_recovers_without_duplicates(self):
+        from app import App
+        from unittest.mock import Mock, patch
+        from queue import Queue
+        from threading import Event
+        for stopped in (False,True):
+            with self.subTest(stopped=stopped), tempfile.TemporaryDirectory() as folder:
+                workspace=App.__new__(App)
+                workspace.busy=False;workspace.cancel=Event();workspace.events=Queue()
+                workspace.session=Mock(name=folder);workspace.session.name=folder
+                for key,value in dict(device='PH70',driver='twain',dpi='600',size='Letter',
+                                      color='Color',scan_flip=True,source='Both sides (duplex)').items():
+                    setattr(workspace,key,Mock(get=Mock(return_value=value)))
+                workspace.start=Mock()
+                with patch('app.backend.scan_command',return_value=['scanner','--capture']):
+                    workspace.scan()
+                scan_folder=next(Path(folder).iterdir())
+                worker=Mock(returncode=1 if stopped else 0)
+                calls = 0
+                def poll():
+                    nonlocal calls
+                    calls += 1
+                    if calls == 1:
+                        Image.new('RGB',(20,30),'red').save(scan_folder/'page-0001.bmp')
+                        return None
+                    if calls == 2:
+                        event,page=workspace.events.get_nowait()
+                        self.assertEqual(event,'scan_page')
+                        self.assertEqual(page.rotation,180)
+                        worker.wait.assert_not_called()
+                        return None # Repeated directory poll must not duplicate.
+                    Image.new('RGB',(20,30),'blue').save(scan_folder/'page-0002.bmp')
+                    (scan_folder/'.page-0003.partial.bmp').write_bytes(b'incomplete')
+                    if stopped: workspace.cancel.set()
+                    return worker.returncode
+                worker.poll.side_effect=poll
+                worker.stdout=iter([]) # Packaged windowless capture has no stdout.
+                with patch('app.subprocess.Popen',return_value=worker):
+                    kind,(count,warning)=workspace.start.call_args.args[1]()
+                self.assertEqual((kind,count),('scanned',2))
+                self.assertEqual(workspace.events.qsize(),1)
+                self.assertEqual(workspace.events.get()[1].path.name,'page-0002.bmp')
+                self.assertEqual('Scan stopped' in warning,stopped)
+
     def test_export_takes_cached_image_without_copy_and_clear_cannot_close_it(self):
         from render_cache import RenderCache
         with tempfile.TemporaryDirectory() as folder:
@@ -388,6 +452,14 @@ class FocusWorkspaceTests(unittest.TestCase):
                 show_page_edits(workspace)
                 workspace.edits_window.withdraw()
                 workspace.busy = True
+                workspace.scanning = True
+                workspace.listbox.configure(state='disabled')
+                workspace.events.put(('scan_page',Page(Path(folder)/'second.png',600,'Second')))
+                workspace.poll()
+                self.assertEqual(workspace.current(),1)
+                self.assertEqual(workspace.listbox.size(),2)
+                self.assertEqual(str(workspace.listbox['state']),'disabled')
+                self.assertIn('Scanning and processing',workspace.batch_subtitle.get())
                 workspace.update_review_controls()
                 self.assertTrue(all(str(w['state']) == 'disabled' for w in workspace.page_controls))
                 workspace.busy = False

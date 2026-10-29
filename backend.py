@@ -3,6 +3,35 @@ from pathlib import Path
 import subprocess
 import sys
 import os
+from collections import deque
+import threading
+import time
+
+
+def stream_capture(worker, folder, on_page):
+    """Watch atomically published native bitmaps, including windowless builds.
+
+    Windowless Python may suppress stdout, so completed files are the source
+    of truth. Drain diagnostics independently so the driver cannot fill a pipe.
+    """
+    tail = deque(maxlen=100)
+    def drain():
+        for line in worker.stdout: tail.append(line)
+    reader = threading.Thread(target=drain,daemon=True)
+    reader.start()
+    seen = set()
+    def collect():
+        for path in sorted(Path(folder).glob('page-*.bmp')):
+            if path not in seen:
+                on_page(path)
+                seen.add(path)
+    while worker.poll() is None:
+        collect()
+        time.sleep(.1)
+    worker.wait()
+    collect()
+    reader.join()
+    return ''.join(tail)
 
 ROOT = Path(sys.executable).parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent
 

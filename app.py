@@ -107,6 +107,7 @@ class App:
         self.events = queue.Queue()
         self.busy = False
         self.saving = False
+        self.scanning = False
         self.dirty = False
         self.worker = None
         self.cancel = threading.Event()
@@ -159,7 +160,8 @@ class App:
         self.scan_button.configure(text='Scan more' if count else 'Scan pages')
         index = self.current()
         self.current_label.set(f'Scan {index+1:02d}' if index is not None else 'No scan selected')
-        self.batch_subtitle.set(f'{count} sides in this batch · Ready for review' if count else 'Load your cards to start a new batch')
+        self.batch_subtitle.set(f'{count} sides received · Scanning and processing…' if self.scanning else
+                               f'{count} sides in this batch · Ready for review' if count else 'Load your cards to start a new batch')
         for widget in self.page_controls:
             widget.configure(state='normal' if count and not self.busy else 'disabled')
 
@@ -218,6 +220,10 @@ class App:
         self.update_review_controls()
 
     def update_pages(self, selected=0):
+        # Acquisition keeps editing disabled, but incoming pages still need to
+        # update the hidden selection model used by the preview and gallery.
+        previous_state = self.listbox.cget('state')
+        self.listbox.configure(state='normal')
         self.listbox.delete(0, 'end')
         for n, page in enumerate(self.pages, 1):
             self.listbox.insert('end', f'  Page {n:02d}')
@@ -227,17 +233,21 @@ class App:
             self.listbox.selection_set(index); self.listbox.see(index)
         self.select_page()
         self.schedule_grid()
+        self.listbox.configure(state=previous_state)
 
     def grid_select(self, event):
-        if self.busy: return
+        if self.busy and not self.scanning: return
         col = int(self.grid_canvas.canvasx(event.x)//128)
         row = int(self.grid_canvas.canvasy(event.y)//150)
         columns = max(1, self.grid_canvas.winfo_width()//128)
         index = row*columns+col
         if col < columns and index < len(self.pages):
+            previous_state = self.listbox.cget('state')
+            self.listbox.configure(state='normal')
             self.listbox.selection_clear(0, 'end')
             self.listbox.selection_set(index)
             self.select_page()
+            self.listbox.configure(state=previous_state)
 
     def draw_grid(self):
         self.grid_canvas.delete('all')
@@ -418,6 +428,7 @@ class App:
 
     def start(self, message, job, scanning=False):
         if self.busy: return
+        self.scanning = scanning
         self.busy = True; self.cancel.clear()
         self.status.set(message); self.progress.start(12)
         for widget in self.controls: widget.configure(state='disabled')
@@ -429,6 +440,7 @@ class App:
         threading.Thread(target=work, daemon=True).start()
 
     def finish(self):
+        self.scanning = False
         self.busy = False; self.worker = None
         self.progress.stop(); self.stop_button.configure(state='disabled')
         for widget in self.controls:
@@ -451,6 +463,11 @@ class App:
                     rendered.close()
                 elif event == 'preview_error':
                     if data[0] == self.preview_serial: self.details.set('Preview unavailable: '+data[1])
+                elif event == 'scan_page':
+                    self.pages.append(data)
+                    self.dirty = True
+                    self.update_pages(len(self.pages)-1)
+                    self.status.set(f'Received {len(self.pages)} sides. Scanning and processing…')
                 elif event == 'error':
                     self.finish(); self.status.set('Could not complete the operation. Your current pages are still available.')
                     if self.saving:
@@ -475,6 +492,10 @@ class App:
                         self.update_pages(len(self.pages)-1)
                         self.status.set(warning or f'Added {len(pages)} pages. Review the edges, then save.')
                         if warning: messagebox.showwarning('Scan / import notice', warning)
+                    elif kind == 'scanned':
+                        count, warning = result
+                        self.status.set(warning or f'Added {count} pages. Review the edges, then save.')
+                        if warning: messagebox.showwarning('Scan notice', warning)
                     elif kind == 'saved':
                         self.saving = False
                         self.clear_batch()
@@ -507,6 +528,7 @@ class App:
             self.start('Importing images…', lambda:('pages', self.store_images(paths, dpi)))
 
     def scan(self):
+        if self.busy: return
         if not self.device.get():
             messagebox.showinfo('Choose scanner', 'Connect your scanner and click Refresh.'); return
         dpi = int(self.dpi.get())
@@ -517,23 +539,31 @@ class App:
         command = backend.scan_command(folder, self.device.get(), self.driver.get(),
                                 'duplex' if self.source.get().startswith('Both') else 'feeder', dpi, size, color)
         def job():
-            if self.cancel.is_set(): return 'pages', ([], 'Scan cancelled before starting.')
+            if self.cancel.is_set(): return 'scanned', (0, 'Scan cancelled before starting.')
             self.worker = subprocess.Popen(command, stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, text=True, encoding='utf-8-sig', errors='replace', creationflags=subprocess.CREATE_NO_WINDOW)
             if self.cancel.is_set(): self.worker.terminate()
-            output, _ = self.worker.communicate()
-            files = sorted([*folder.glob('page-*.png'),*folder.glob('page-*.bmp')])
             pages, warnings = [], []
-            for path in files:
+            seen = set()
+            def receive(path):
+                if path in seen: return
                 try:
                     with Image.open(path) as image:
                         image.verify()
-                    pages.append(Page(path, dpi, path.name))
+                    page = Page(path, dpi, path.name, 180 if flip else 0)
+                    seen.add(path)
+                    pages.append(page)
+                    self.events.put(('scan_page', page))
                 except Exception as exc:
                     warnings.append(f'{path.name}: {exc}')
+            if '--capture' in command:
+                output = backend.stream_capture(self.worker, folder, receive)
+            else:
+                # Other scanner bridges do not promise atomic per-page writes.
+                output, _ = self.worker.communicate()
+            for path in sorted([*folder.glob('page-*.png'),*folder.glob('page-*.bmp')]):
+                receive(path)
             warning = '\n'.join(warnings)
-            if flip:
-                for page in pages: page.rotation = 180
             if self.cancel.is_set():
                 warning = f'Scan stopped. {len(pages)} completed pages recovered. Check page order before scanning the remaining sheets.'
             elif self.worker.returncode:
@@ -542,8 +572,8 @@ class App:
                 warning = f'Scanner reported a problem. {len(pages)} completed pages recovered.\n\n{output[-2500:]}'
             elif not pages:
                 warning = 'No pages returned. Load the feeder and check the selected scanner and paper size.'
-            return 'pages', (pages, warning)
-        self.start('Scanning… Load complete batches before starting. Both sides are kept in driver order.', job, scanning=True)
+            return 'scanned', (len(pages), warning)
+        self.start('Scanning… Completed sides will appear and process as they arrive.', job, scanning=True)
 
     def stop(self):
         self.cancel.set()
