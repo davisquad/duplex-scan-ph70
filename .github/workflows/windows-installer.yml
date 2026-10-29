@@ -1,0 +1,81 @@
+name: Build Windows installer
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - name: Install build dependencies
+        run: |
+          python -m pip install -r requirements.txt
+          if ($LASTEXITCODE) { throw 'Dependency installation failed' }
+      - name: Test and package
+        run: |
+          python -m unittest test_app -q
+          if ($LASTEXITCODE) { throw 'Tests failed' }
+          python -m PyInstaller --noconfirm 'Duplex Scan.spec'
+          if ($LASTEXITCODE) { throw 'Packaging failed' }
+          python installer/collect_licenses.py
+          if ($LASTEXITCODE) { throw 'License collection failed' }
+      - name: Compile setup
+        run: |
+          $compiler = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          & $compiler installer/DuplexScan.iss
+          if ($LASTEXITCODE) { throw 'Installer compilation failed' }
+      - name: Test installation, upgrade, installed app and uninstall
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $setup = (Get-ChildItem installer-output/*Setup*.exe).FullName
+          $installDir = Join-Path $env:RUNNER_TEMP 'Duplex Scan Installation Test'
+          $exe = Join-Path $installDir 'Duplex Scan.exe'
+          $report = Join-Path $env:RUNNER_TEMP 'installed-check.json'
+          foreach ($pass in 1,2) {
+            $log = Join-Path $env:RUNNER_TEMP "setup-$pass.log"
+            $process = Start-Process -FilePath $setup -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR=`"$installDir`" /LOG=`"$log`"" -WindowStyle Hidden -Wait -PassThru
+            if ($process.ExitCode -ne 0) { throw "Setup failed: $($process.ExitCode)" }
+            if (!(Test-Path "$installDir\scanner-engine\App\lib\_win64\twaindsm.dll")) { throw 'Scanner engine missing' }
+            $process = Start-Process -FilePath $exe -ArgumentList "--self-check `"$report`"" -WindowStyle Hidden -Wait -PassThru
+            if ($process.ExitCode -ne 0) { throw 'Installed application check failed' }
+            $check = Get-Content -LiteralPath $report -Raw | ConvertFrom-Json
+            if (!$check.ok) { throw $check.error }
+            if (!$check.engine.StartsWith($installDir)) { throw 'App used a scanner engine outside its installation' }
+          }
+          $shell = New-Object -ComObject WScript.Shell
+          $shortcut = $shell.CreateShortcut((Join-Path ([Environment]::GetFolderPath('Desktop')) 'Duplex Scan.lnk'))
+          if ($shortcut.TargetPath -ne $exe) { throw 'Desktop shortcut target is incorrect' }
+          $sentinelDir = Join-Path $env:LOCALAPPDATA 'DuplexScan'
+          New-Item -ItemType Directory -Force $sentinelDir | Out-Null
+          $sentinel = Join-Path $sentinelDir 'installer-test-keep.txt'
+          Set-Content -LiteralPath $sentinel 'preserve settings'
+          $process = Start-Process -FilePath "$installDir\unins000.exe" -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART' -WindowStyle Hidden -Wait -PassThru
+          if ($process.ExitCode -ne 0 -or (Test-Path $exe)) { throw 'Uninstall failed' }
+          if (!(Test-Path $sentinel)) { throw 'Uninstall removed user data' }
+          'Install, upgrade, packaged app, shortcuts and uninstall checks passed.'
+      - name: Write checksum
+        run: |
+          $setup = Get-ChildItem installer-output/*Setup*.exe
+          $hash = (Get-FileHash $setup.FullName -Algorithm SHA256).Hash.ToLower()
+          "$hash  $($setup.Name)" | Set-Content installer-output/SHA256SUMS.txt -Encoding ascii
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DuplexScan-Windows-Installer
+          path: installer-output/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Installation-test-logs
+          path: |
+            ${{ runner.temp }}/setup-*.log
+            ${{ runner.temp }}/installed-check.json

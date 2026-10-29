@@ -13,3 +13,7 @@
 !/Duplex Scan.spec
 !/DuplexScan-Neon.ico
 !/DuplexScan-Neon.png
+
+!/installer/
+!/.github/
+!/smoke_check.py

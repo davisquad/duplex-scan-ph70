@@ -109,8 +109,8 @@ class App:
         except (OSError, ValueError):
             pass
         if self.cfg.get('capture_version',0) < 4:
-            self.cfg.update(margin=.3,mode='Card outline',crop=True,deskew=True)
-        root.title('Duplex Scan 1.6.3 • PH70 • Scan gallery')
+            self.cfg.update(margin=.6,mode='Card outline',crop=True,deskew=True)
+        root.title('Duplex Scan 1.7.0 • PH70 • Scan gallery')
         root.geometry('1220x820')
         root.minsize(1020, 710)
         root.configure(bg='#f3f5fa')
@@ -129,7 +129,7 @@ class App:
         self.source = tk.StringVar(value=self.cfg.get('source', 'Both sides (duplex)'))
         self.size = tk.StringVar(value=self.cfg.get('size', 'Letter'))
         self.color = tk.StringVar(value=self.cfg.get('color', 'Color'))
-        self.margin = tk.StringVar(value=str(self.cfg.get('margin', .3)))
+        self.margin = tk.StringVar(value=str(self.cfg.get('margin', .6)))
         self.autocrop = tk.BooleanVar(value=self.cfg.get('crop', True))
         self.deskew = tk.BooleanVar(value=self.cfg.get('deskew', True))
         self.mode = tk.StringVar(value=self.cfg.get('mode', 'Page edges').replace('Content + border', 'Content + space'))
@@ -665,6 +665,9 @@ class App:
 
 
 if __name__ == '__main__':
+    if '--self-check' in sys.argv:
+        from smoke_check import run
+        raise SystemExit(run(sys.argv[sys.argv.index('--self-check')+1]))
     if '--capture' in sys.argv:
         from capture import run
         raise SystemExit(run(sys.argv[sys.argv.index('--capture')+1:]))

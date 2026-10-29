@@ -1,6 +1,6 @@
 # Duplex Scan for the PH70
 
-A local Windows scanning app for the Visioneer Patriot PH70 duplex scanner. Version **1.6.3**.
+A local Windows scanning app for the Visioneer Patriot PH70 duplex scanner. Version **1.7.0**.
 
 ![App icon](DuplexScan-Neon.png)
 
@@ -15,7 +15,19 @@ A local Windows scanning app for the Visioneer Patriot PH70 duplex scanner. Vers
 - Full-quality render reuse, a 256 MB cache limit, and background preview processing.
 - Image/multipage TIFF import, manual cropping, rotation, and fine tilt.
 
-## Requirements
+## Install on Windows (no Python required)
+
+**[Download the Windows installer](https://github.com/davisquad/duplex-scan-ph70/releases/latest/download/DuplexScan-Setup-1.7.0-x64.exe)**
+
+Open the setup file and click **Install**. It installs for your Windows account, creates desktop and Start menu shortcuts, and opens the app. It downloads and verifies the NAPS2 engine automatically (internet required, about 70 MB). No manual extraction, Python installation, or separate NAPS2 setup is needed.
+
+Install [Visioneer's PH70 driver](https://www.visioneer.com/drivers-and-manuals/) once before scanning if it is not already installed. Hardware drivers are not bundled or installed automatically. The Start menu includes a driver-download shortcut.
+
+This release is **unsigned**. Windows may show a warning or block it with Smart App Control. The installer does not bypass those protections or change security settings. Code signing remains necessary for reliable distribution to protected PCs.
+
+Uninstall from Windows Settings > Apps. Saved photos and user settings are preserved. Installing a newer setup updates the app in the same location.
+
+## Requirements for running from source
 
 - Windows 11, 64-bit (the tested platform).
 - Python 3.12, 64-bit, including Tkinter, to run from source.
@@ -45,7 +57,7 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe app.py
 ```
 
-Choose TWAIN, the PH70, and Both sides. Resolution defaults to 600 DPI. For CDVs, set **Final gap outside card** to **0.6 mm**; the clean-install default is 0.3 mm. Settings are remembered on normal exit.
+Choose TWAIN, the PH70, and Both sides. Resolution defaults to 600 DPI. The clean-install **Final gap outside card** defaults to **0.6 mm**. Settings are remembered on normal exit.
 
 Scan, review both sides, and click **Save JPEGs**. Exports use quality 95, no chroma subsampling, and unique filenames. If saving fails, already-completed JPEGs may remain in the output folder while the batch stays available for retry.
 
@@ -56,6 +68,19 @@ Scan, review both sides, and click **Save JPEGs**. Exports use quality 95, no ch
 ```
 
 Run `dist/Duplex Scan/Duplex Scan.exe`. Keep the complete output folder and install the scanner engine as described above. Local builds are unsigned and Windows Smart App Control may block them. Public distribution should use trusted code signing. The application does not change security settings.
+
+### Build the installer
+
+The **Build Windows installer** GitHub Actions workflow packages Python and the app, preserves third-party license files, and compiles `installer/DuplexScan.iss` using Inno Setup 6.5 or newer. It tests a clean install, reinstall/upgrade, packaged GUI/image/scanner-engine initialization, shortcut creation, and uninstall on a Windows runner. It does not perform a hardware scan.
+
+For a local installer build, after the PyInstaller command above:
+
+```powershell
+.\.venv\Scripts\python.exe installer/collect_licenses.py
+& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer/DuplexScan.iss
+```
+
+Output: `installer-output/DuplexScan-Setup-1.7.0-x64.exe`. NAPS2 is downloaded directly from its official release during installation and checked against a pinned SHA-256 digest. Keep that URL, version, archive size, and digest together when updating the engine.
 
 ## Tests
 

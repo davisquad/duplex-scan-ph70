@@ -1,0 +1,20 @@
+DUPLEX SCAN
+
+1. Install the manufacturer's PH70 driver if you have not already done so:
+   https://www.visioneer.com/drivers-and-manuals/
+2. Connect and turn on the scanner, then open Duplex Scan.
+3. Load your cards and click Scan pages. Review both sides and click Save JPEGs.
+
+Defaults: 600 DPI, duplex, 180-degree rotation, skew correction, and a 0.6 mm
+gap outside the card. JPEGs save directly in Pictures\Scanned Photos under
+your user home folder. After saving, the review clears for the next batch.
+
+The app runtime is included. Setup downloads NAPS2 8.6.0 directly from its
+official GitHub release and verifies its SHA-256 checksum. Its licenses stay
+in scanner-engine\App. Source: https://github.com/cyanfish/naps2/tree/v8.6.0
+
+This release is unsigned. Windows may warn or Smart App Control may block it.
+The installer does not change security settings or install scanner drivers.
+
+Updates and support: https://github.com/davisquad/duplex-scan-ph70
+Independent software, not affiliated with Visioneer, Epson, or NAPS2.
