@@ -22,6 +22,63 @@ def sample(angle=0):
 
 
 class ProcessingTests(unittest.TestCase):
+    def test_continuous_capture_waits_and_finishes_both_sides_before_stop(self):
+        from capture import capture_batches
+        from unittest.mock import Mock
+        from threading import Event
+        stopped=Event(); source=Mock(); pages=[]; states=[]
+        source.get_capability_current.side_effect=[(0,False),(0,True),(0,False),(0,True)]
+        def acquire(after,before,**kwargs):
+            before({});after('front',1)
+            if len(pages)==3: stopped.set() # Save during the second batch's front.
+            before({});after('back',0)
+        source.acquire_natively.side_effect=acquire
+        batches=capture_batches(source,lambda info:None,lambda im,more:pages.append(im),
+                                True,stopped.is_set,states.append,pause=lambda delay:None)
+        self.assertEqual(batches,2)
+        self.assertEqual(pages,['front','back','front','back'])
+        self.assertEqual(states,['waiting','scanning','waiting','scanning','finished'])
+
+    def test_continuous_capture_stop_while_empty_never_acquires(self):
+        from capture import capture_batches
+        from unittest.mock import Mock
+        from threading import Event
+        stopped=Event();source=Mock();source.get_capability_current.return_value=(0,False)
+        result=capture_batches(source,Mock(),Mock(),True,stopped.is_set,Mock(),pause=lambda delay:stopped.set())
+        self.assertEqual(result,0)
+        source.acquire_natively.assert_not_called()
+
+    def test_continuous_capture_driver_fault_does_not_retry(self):
+        from capture import capture_batches
+        from unittest.mock import Mock
+        source=Mock();source.get_capability_current.return_value=(0,True)
+        source.acquire_natively.side_effect=RuntimeError('paper jam')
+        with self.assertRaisesRegex(RuntimeError,'paper jam'):
+            capture_batches(source,Mock(),Mock(),True,lambda:False,Mock())
+        self.assertEqual(source.acquire_natively.call_count,1)
+
+    def test_save_in_scan_mode_waits_for_capture_completion(self):
+        from app import App
+        from unittest.mock import Mock
+        from queue import Queue
+        with tempfile.TemporaryDirectory() as folder:
+            app=App.__new__(App);app.root=Mock();app.scanning=True;app.active_continuous=True
+            app.busy=True;app.save_after_scan=False;app.scan_folder=Path(folder)
+            app.status=Mock();app.update_review_controls=Mock();app.events=Queue()
+            app.pages=[Page(Path('front'),600,'front')];app.finish=Mock()
+            app.save()
+            self.assertTrue((Path(folder)/'stop-request').exists())
+            self.assertTrue(app.save_after_scan)
+            app.save=Mock()
+            app.events.put(('scanned_unused',None)) # Unknown events must not trigger export.
+            app.events.put(('scan_page',Page(Path('back'),600,'back')))
+            app.events.put(('done',('scanned',(2,''))))
+            app.update_pages=Mock()
+            app.poll()
+            self.assertEqual(len(app.pages),2)
+            app.save.assert_called_once()
+            self.assertFalse(app.save_after_scan)
+
     def test_thumbnail_error_does_not_cache_a_fake_completed_image(self):
         from app import App
         from unittest.mock import Mock
@@ -166,7 +223,7 @@ class ProcessingTests(unittest.TestCase):
                 workspace.busy=False;workspace.cancel=Event();workspace.events=Queue()
                 workspace.session=Mock(name=folder);workspace.session.name=folder
                 for key,value in dict(device='PH70',driver='twain',dpi='600',size='Letter',
-                                      color='Color',scan_flip=True,source='Both sides (duplex)').items():
+                                      color='Color',scan_flip=True,source='Both sides (duplex)',continuous=False).items():
                     setattr(workspace,key,Mock(get=Mock(return_value=value)))
                 workspace.start=Mock()
                 with patch('app.backend.scan_command',return_value=['scanner','--capture']):
@@ -270,7 +327,7 @@ class ProcessingTests(unittest.TestCase):
         from unittest.mock import Mock,patch
         from queue import Queue
         app=App.__new__(App)
-        app.busy=False;app.saving=False;app.pages=[Page(Path('source'),600,'page')]
+        app.busy=False;app.saving=False;app.scanning=False;app.pages=[Page(Path('source'),600,'page')]
         app.settings=Mock(return_value=Settings());app.start=Mock();app.root=Mock()
         app.preview_serial=4;app.grid_serial=5;app.grid_timer='timer'
         app.save()

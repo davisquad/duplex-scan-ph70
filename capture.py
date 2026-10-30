@@ -1,11 +1,42 @@
 """PH70 acquisition with explicitly negotiated edge-preserving TWAIN settings."""
 import argparse
 import json
+import time
 from pathlib import Path
 from PIL import Image
 import twain
 from twain.lowlevel import constants as c
 import backend
+
+
+def feeder_loaded(source):
+    try:
+        _, value = source.get_capability_current(c.CAP_FEEDERLOADED)
+        return bool(value)
+    except Exception as exc:
+        raise RuntimeError('Scan mode requires feeder paper detection. Use single-batch scanning with this driver.') from exc
+
+
+def capture_batches(source, before, after, continuous, stopped, state, pause=time.sleep):
+    """Keep all TWAIN calls on the acquisition thread and finish duplex batches.
+
+    Stop requests are checked between acquisitions, never between duplex sides.
+    Driver faults propagate instead of triggering an unattended retry loop.
+    """
+    batches = 0
+    while not stopped():
+        if continuous:
+            state('waiting')
+            while not stopped() and not feeder_loaded(source):
+                pause(.25)
+            if stopped(): break
+        state('scanning')
+        source.acquire_natively(after,before,show_ui=False,modal=False)
+        batches += 1
+        if not continuous: break
+        pause(.25) # Avoid a tight re-enable loop if the sensor is slow to settle.
+    state('finished')
+    return batches
 
 
 def configure(source, dpi, duplex, color, size):
@@ -54,17 +85,28 @@ def run(argv):
     parser.add_argument('--size',required=True)
     parser.add_argument('--color',required=True)
     parser.add_argument('--inspect',action='store_true')
+    parser.add_argument('--continuous',action='store_true')
     args=parser.parse_args(argv)
     folder=Path(args.folder); folder.mkdir(parents=True,exist_ok=True)
     count=0
     metadata={}
+    started=time.perf_counter()
+    metrics={'pages':0,'bitmap_write_seconds':0.0,'batches':0}
+    def state(value):
+        temporary=folder/'capture-state.tmp'
+        temporary.write_text(json.dumps({'state':value,'pages':count}),encoding='utf-8')
+        temporary.replace(folder/'capture-state.json')
     try:
         dsm=backend.engine().parent/'lib'/'_win64'/'twaindsm.dll'
         with twain.SourceManager(dsm_name=str(dsm),ProductName='Duplex Scan') as manager:
             with manager.open_source(args.device) as source:
+                metrics['driver_open_seconds']=time.perf_counter()-started
+                setup_started=time.perf_counter()
                 report=configure(source,args.dpi,args.source=='duplex',args.color,args.size)
+                metrics['configure_seconds']=time.perf_counter()-setup_started
                 (folder/'capture-settings.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
                 if args.inspect:
+                    report['feeder_loaded']=feeder_loaded(source)
                     print(json.dumps(report),flush=True)
                     return 0
                 def before(info):
@@ -74,15 +116,23 @@ def run(argv):
                     count+=1
                     temporary=folder/f'.page-{count:04d}.partial.bmp'
                     destination=folder/f'page-{count:04d}.bmp'
+                    write_started=time.perf_counter()
                     try:
                         image.save(str(temporary))
                         temporary.replace(destination)
+                        metrics['pages']=count
+                        metrics['bitmap_write_seconds']+=time.perf_counter()-write_started
                     finally:
                         temporary.unlink(missing_ok=True)
                     print(f'Captured page {count}',flush=True)
-                source.acquire_natively(after,before,show_ui=False,modal=False)
+                metrics['batches']=capture_batches(source,before,after,args.continuous,
+                    lambda:(folder/'stop-request').exists(),state)
         return 0
     except Exception as exc:
         (folder/'capture-error.txt').write_text(f'{type(exc).__name__}: {exc}',encoding='utf-8')
         print(f'{type(exc).__name__}: {exc}',flush=True)
         return 1
+    finally:
+        metrics['session_seconds']=time.perf_counter()-started
+        try: (folder/'capture-metrics.json').write_text(json.dumps(metrics,indent=2),encoding='utf-8')
+        except OSError: pass

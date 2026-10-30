@@ -115,6 +115,9 @@ class App:
         self.busy = False
         self.saving = False
         self.scanning = False
+        self.active_continuous = False
+        self.save_after_scan = False
+        self.scan_folder = None
         self.dirty = False
         self.worker = None
         self.cancel = threading.Event()
@@ -149,6 +152,7 @@ class App:
         self.mode = tk.StringVar(value=self.cfg.get('mode', 'Page edges').replace('Content + border', 'Content + space'))
         self.original = tk.BooleanVar(value=False)
         self.scan_flip = tk.BooleanVar(value=self.cfg.get('scan_flip', True))
+        self.continuous = tk.BooleanVar(value=self.cfg.get('continuous', True))
         self.tilt = tk.StringVar(value='0')
         self.status = tk.StringVar(value='Ready. Load your pages, then choose Scan pages.')
         self.details = tk.StringVar(value='Your preview will appear here.')
@@ -163,9 +167,10 @@ class App:
     def update_review_controls(self):
         if not hasattr(self, 'save_button'): return
         count = len(self.pages)
-        self.save_button.configure(text=f'Save {count} JPEGs' if count else 'Save JPEGs',
-                                   state='normal' if count and not self.busy else 'disabled')
-        self.scan_button.configure(text='Scan more' if count else 'Scan pages')
+        live = self.scanning and self.active_continuous
+        self.save_button.configure(text='Save JPEGs & stop' if live else f'Save {count} JPEGs' if count else 'Save JPEGs',
+                                   state='normal' if (live and not self.save_after_scan) or (count and not self.busy) else 'disabled')
+        self.scan_button.configure(text='Enter scan mode' if self.continuous.get() else 'Scan more' if count else 'Scan pages')
         index = self.current()
         self.current_label.set(f'Scan {index+1:02d}' if index is not None else 'No scan selected')
         self.batch_subtitle.set(f'{count} sides received · Scanning and processing…' if self.scanning else
@@ -447,6 +452,7 @@ class App:
         for widget in self.controls: widget.configure(state='disabled')
         self.listbox.configure(state='disabled')
         self.stop_button.configure(state='normal' if scanning else 'disabled')
+        self.update_review_controls()
         def work():
             try: self.events.put(('done', job()))
             except Exception as exc: self.events.put(('error', str(exc)))
@@ -490,7 +496,14 @@ class App:
                     self.dirty = True
                     self.update_pages(len(self.pages)-1)
                     self.status.set(f'Received {len(self.pages)} sides. Scanning and processing…')
+                elif event == 'scan_state':
+                    if self.scanning and not self.save_after_scan:
+                        if data == 'waiting':
+                            self.status.set(f'Scan mode ready · {len(self.pages)} sides. Load more cards, or choose Save JPEGs & stop.')
+                        elif data == 'scanning':
+                            self.status.set('Scanning the loaded batch… completed sides appear automatically.')
                 elif event == 'error':
+                    self.save_after_scan = False
                     self.finish(); self.status.set('Could not complete the operation. Your current pages are still available.')
                     if self.saving:
                         self.saving = False
@@ -516,8 +529,15 @@ class App:
                         if warning: messagebox.showwarning('Scan / import notice', warning)
                     elif kind == 'scanned':
                         count, warning = result
+                        should_save = self.save_after_scan
+                        self.save_after_scan = False
+                        self.active_continuous = False
+                        self.scan_folder = None
                         self.status.set(warning or f'Added {count} pages. Review the edges, then save.')
                         if warning: messagebox.showwarning('Scan notice', warning)
+                        elif should_save:
+                            if self.pages: self.save()
+                            else: self.status.set('Scan mode ended. No pages to save.')
                     elif kind == 'saved':
                         self.saving = False
                         self.clear_batch()
@@ -561,6 +581,13 @@ class App:
         folder = Path(self.session.name)/uuid.uuid4().hex; folder.mkdir()
         command = backend.scan_command(folder, self.device.get(), self.driver.get(),
                                 'duplex' if self.source.get().startswith('Both') else 'feeder', dpi, size, color)
+        continuous = self.continuous.get()
+        if continuous and '--capture' not in command:
+            messagebox.showinfo('Scan mode', 'Continuous Scan mode currently requires the PH70 TWAIN driver. Turn off Scan mode to scan one batch.'); return
+        self.active_continuous = continuous
+        self.save_after_scan = False
+        self.scan_folder = folder
+        if continuous: command.append('--continuous')
         def job():
             if self.cancel.is_set(): return 'scanned', (0, 'Scan cancelled before starting.')
             self.worker = subprocess.Popen(command, stdout=subprocess.PIPE,
@@ -580,7 +607,8 @@ class App:
                 except Exception as exc:
                     warnings.append(f'{path.name}: {exc}')
             if '--capture' in command:
-                output = backend.stream_capture(self.worker, folder, receive)
+                output = backend.stream_capture(self.worker, folder, receive,
+                    lambda state:self.events.put(('scan_state',state)))
             else:
                 # Other scanner bridges do not promise atomic per-page writes.
                 output, _ = self.worker.communicate()
@@ -593,12 +621,13 @@ class App:
                 error_file=folder/'capture-error.txt'
                 if error_file.exists(): output=error_file.read_text(encoding='utf-8')
                 warning = f'Scanner reported a problem. {len(pages)} completed pages recovered.\n\n{output[-2500:]}'
-            elif not pages:
+            elif not pages and not continuous:
                 warning = 'No pages returned. Load the feeder and check the selected scanner and paper size.'
             return 'scanned', (len(pages), warning)
         self.start('Scanning… Completed sides will appear and process as they arrive.', job, scanning=True)
 
     def stop(self):
+        self.save_after_scan = False
         self.cancel.set()
         if self.worker and self.worker.poll() is None:
             subprocess.run(['taskkill', '/PID', str(self.worker.pid), '/T', '/F'], capture_output=True,
@@ -607,6 +636,16 @@ class App:
         self.stop_button.configure(state='disabled')
 
     def save(self):
+        if self.scanning and self.active_continuous:
+            if self.save_after_scan: return
+            try:
+                (self.scan_folder/'stop-request').touch()
+            except OSError as exc:
+                messagebox.showerror('Could not stop scan mode', str(exc)); return
+            self.save_after_scan = True
+            self.update_review_controls()
+            self.status.set('Finishing the current feeder batch, then saving all completed sides…')
+            return
         if self.busy: return
         if not self.pages:
             messagebox.showinfo('No pages', 'Scan or import pages first.'); return
@@ -646,7 +685,7 @@ class App:
         if self.dirty and self.pages and not messagebox.askyesno('Unsaved pages', 'Close and discard the unsaved pages or edits?'): return
         try:
             cfg = {key:getattr(self,key).get() for key in ['driver','device','dpi','source','size','color','margin','mode','appearance']}
-            cfg.update(crop=self.autocrop.get(), deskew=self.deskew.get(), scan_flip=self.scan_flip.get(),capture_version=4)
+            cfg.update(crop=self.autocrop.get(), deskew=self.deskew.get(), scan_flip=self.scan_flip.get(),continuous=self.continuous.get(),capture_version=4)
             temporary = STATE/('settings-'+uuid.uuid4().hex+'.tmp')
             try:
                 temporary.write_text(json.dumps(cfg, indent=2))

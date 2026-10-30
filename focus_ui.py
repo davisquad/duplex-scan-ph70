@@ -62,7 +62,7 @@ def apply_theme(app):
 
 def build_focus_ui(app):
     root = app.root
-    root.title('Duplex Scan 1.12.0 • Focus workspace')
+    root.title('Duplex Scan 1.13.0 • Focus workspace')
     root.geometry('1180x800')
     root.minsize(960,720)
     app.appearance = tk.StringVar(value=app.cfg.get('appearance', 'Light'))
@@ -118,8 +118,10 @@ def build_focus_ui(app):
     row=ttk.Frame(inspector,style='Panel.TFrame');row.pack(fill='x',pady=4)
     ttk.Label(row,text='Sides',style='Panel.TLabel').pack(side='left')
     app.combo(row,app.source,['Both sides (duplex)','Front side only'],side='right',width=17)
+    scan_mode=ttk.Checkbutton(inspector,text='Continuous Scan mode',variable=app.continuous,command=app.update_review_controls)
+    scan_mode.pack(anchor='w',pady=(4,0));app.controls.append(scan_mode)
     app.button(inspector,'Scanner settings…',lambda:show_settings(app),fill='x',pady=(8,4),style='Quiet.TButton')
-    ttk.Separator(inspector).pack(fill='x',pady=16)
+    ttk.Separator(inspector).pack(fill='x',pady=10)
     caption('FINISHING')
     for text,var in [('Auto crop',app.autocrop),('Straighten',app.deskew)]:
         widget=ttk.Checkbutton(inspector,text=text,variable=var,command=app.changed)
@@ -131,11 +133,11 @@ def build_focus_ui(app):
     spin.pack(side='right',padx=6);app.controls.append(spin)
     spin.bind('<Return>',lambda e:app.changed());spin.bind('<FocusOut>',lambda e:app.changed())
     ttk.Label(inspector,text='Keeps real scanned background\naround the card.',style='Panel.Small.TLabel',wraplength=210).pack(anchor='w',pady=(2,0))
-    ttk.Separator(inspector).pack(fill='x',pady=16)
+    ttk.Separator(inspector).pack(fill='x',pady=10)
     ttk.Label(inspector,text='Save location',style='Panel.Small.TLabel').pack(anchor='w')
     ttk.Label(inspector,text='Pictures / Scanned Photos',style='Panel.TLabel',wraplength=210).pack(anchor='w',pady=5)
     ttk.Label(inspector,text='JPEG · Full color detail\nBatch clears after saving.',style='Panel.Small.TLabel').pack(anchor='w')
-    app.button(inspector,'New batch',app.new_batch,fill='x',pady=(18,0),style='Quiet.TButton')
+    app.button(inspector,'New batch',app.new_batch,fill='x',pady=(8,0),style='Quiet.TButton')
 
     # The gallery is reserved at the bottom; remaining height belongs to preview.
     gallery_section=ttk.Frame(review);gallery_section.pack(side='bottom',fill='x',pady=(14,0))

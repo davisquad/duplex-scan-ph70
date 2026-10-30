@@ -6,9 +6,10 @@ import os
 from collections import deque
 import threading
 import time
+import json
 
 
-def stream_capture(worker, folder, on_page):
+def stream_capture(worker, folder, on_page, on_status=None):
     """Watch atomically published native bitmaps, including windowless builds.
 
     Windowless Python may suppress stdout, so completed files are the source
@@ -20,16 +21,39 @@ def stream_capture(worker, folder, on_page):
     reader = threading.Thread(target=drain,daemon=True)
     reader.start()
     seen = set()
-    def collect():
-        for path in sorted(Path(folder).glob('page-*.bmp')):
+    next_page = 1
+    status_stamp = None
+    def collect(final=False):
+        nonlocal next_page,status_stamp
+        # Native capture publishes sequential names. Check only the next file
+        # instead of rescanning/sorting the entire growing batch ten times/sec.
+        while True:
+            path = Path(folder)/f'page-{next_page:04d}.bmp'
+            if not path.exists(): break
+            on_page(path)
+            seen.add(path)
+            next_page += 1
+        if final:
+            paths=sorted(Path(folder).glob('page-*.bmp'),key=lambda p:int(p.stem.split('-')[-1]))
+        else: paths=[]
+        for path in paths:
             if path not in seen:
                 on_page(path)
                 seen.add(path)
+        if on_status:
+            try:
+                path=Path(folder)/'capture-state.json'
+                stamp=path.stat().st_mtime_ns
+                if stamp != status_stamp:
+                    data=json.loads(path.read_text(encoding='utf-8'))
+                    on_status(data['state'])
+                    status_stamp=stamp
+            except (OSError,ValueError,KeyError): pass
     while worker.poll() is None:
         collect()
         time.sleep(.1)
     worker.wait()
-    collect()
+    collect(final=True)
     reader.join()
     return ''.join(tail)
 

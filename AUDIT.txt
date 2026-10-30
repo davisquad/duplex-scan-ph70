@@ -1,5 +1,36 @@
 Duplex Scan 1.12 code and performance audit - 2026-10-30
 
+1.13 driver-integration follow-up - 2026-10-30
+Continuous Scan mode retains the source manager and PH70 source between batches.
+It checks CAP_FEEDERLOADED every 250 ms, configures capture once, and waits for
+more cards. Save requests a graceful exit after the currently loaded feeder
+batch, so duplex sides are not intentionally cut apart. Stop scan remains an
+immediate forced interruption with completed-file recovery. Driver errors stop
+the mode rather than trigger automatic retries. Unsupported paper detection
+requires single-batch mode. Capture timing metrics stay local to the session.
+
+Live PH70 test: two successive batches, three cards/six sides, automatic pickup
+of the second batch, followed by a graceful stop while waiting. Driver open:
+1.189 s; configuration: 0.274 s; six atomic bitmap writes: 0.393 s total. Session
+elapsed time includes the user's loading delay and is not scanner throughput.
+The initial open/configure cost is avoided for each subsequent batch in the
+same mode. One initial connection attempt returned MaxConnectionsError; a
+subsequent explicit test attempt succeeded. No vendor binaries were changed.
+
+Live page delivery now checks the next sequential atomic filename rather than
+enumerating/sorting every earlier page ten times a second. A final directory
+pass recovers completed files at exit. Quality/overscan/rotation settings and
+the lossless bitmap handoff are unchanged. 38 automated tests include empty
+feeder waiting, repeat batches, Save during a duplex batch, ordered saving, and
+halting on driver errors. The packaged UI was also tested with another duplex card in progress: Save
+finished that card, saved all eight accumulated sides as 600-DPI JPEGs, exited
+Scan mode, and cleared the review. Saved JPEGs were decoded and verified.
+
+Protocol reference: TWAIN 2.5 Specification, document-feeder capabilities:
+https://twain.org/wp-content/uploads/2021/11/TWAIN-2.5-Specification.pdf
+
+Original 1.12 audit follows:
+
 Scope
 Reviewed PH70 acquisition, atomic page publication, live delivery, processing,
 preview and thumbnail scheduling, caches, export, settings, UI error recovery,
