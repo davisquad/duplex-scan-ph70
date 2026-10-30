@@ -22,6 +22,96 @@ def sample(angle=0):
 
 
 class ProcessingTests(unittest.TestCase):
+    def test_thumbnail_error_does_not_cache_a_fake_completed_image(self):
+        from app import App
+        from unittest.mock import Mock
+        from queue import Queue
+        app=App.__new__(App);app.root=Mock();app.events=Queue();app.grid_serial=7
+        app.grid_images={};app.grid_slots={'key':[(1,2)]};app.grid_canvas=Mock();app.details=Mock()
+        app.events.put(('grid_error',(7,'key','read failure')))
+        app.poll()
+        self.assertFalse(app.grid_images)
+        app.grid_canvas.itemconfigure.assert_called_once_with(2,text='Preview\nunavailable')
+
+    def test_latest_worker_drops_superseded_pending_jobs(self):
+        from latest_worker import LatestWorker
+        from threading import Event
+        worker=LatestWorker('test-preview')
+        entered,release,done=Event(),Event(),Event()
+        calls=[]
+        def first():
+            entered.set(); release.wait(3); calls.append('first')
+        try:
+            worker.submit(first)
+            self.assertTrue(entered.wait(2))
+            for n in range(100): worker.submit(lambda n=n:calls.append(n))
+            worker.submit(lambda:(calls.append('latest'),done.set()))
+            release.set()
+            self.assertTrue(done.wait(2))
+            self.assertEqual(calls,['first','latest'])
+        finally:
+            release.set();worker.close();worker.thread.join(3)
+        self.assertFalse(worker.thread.is_alive())
+
+    def test_cached_preview_exact_pixels_budget_and_invalidation(self):
+        from render_cache import RenderCache
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/'page.png';sample(4).save(path)
+            page=Page(path,600,'test',180);settings=Settings(True,True,.6,'Card outline')
+            cache=RenderCache(limit=1,view_limit=100*100*4)
+            with Image.open(path) as source: expected,_=process(source,600,settings,180)
+            expected.thumbnail((100,100),Image.Resampling.LANCZOS)
+            with patch('render_cache.process',wraps=process) as renderer:
+                for _ in range(2):
+                    actual,_=cache.preview(page,settings,(100,100))
+                    self.assertEqual(actual.tobytes(),expected.tobytes());actual.close()
+                self.assertEqual(renderer.call_count,1)
+                page.rotation=90
+                cache.preview(page,settings,(100,100))[0].close()
+                self.assertEqual(renderer.call_count,2)
+            self.assertLessEqual(cache.view_bytes,cache.view_limit)
+            cache.clear()
+            self.assertFalse(cache.views)
+            self.assertEqual(cache.view_bytes,0)
+
+    def test_export_rechecks_jpeg_after_waiting_for_render(self):
+        from render_cache import RenderCache
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/'page.bmp';Image.new('RGB',(80,120),'red').save(path)
+            page=Page(path,600,'test');settings=Settings(False,False,0)
+            cache=RenderCache();render=cache.render
+            def raced(*args,**kwargs):
+                render(page,settings)[0].close() # Background completion while waiting.
+                return render(*args,**kwargs)
+            with patch.object(cache,'render',side_effect=raced):
+                result=cache.for_export(page,settings)
+            self.assertIsInstance(result,bytes)
+            self.assertEqual(result,cache.jpeg(page,settings))
+
+    def test_content_crop_matches_original_coordinate_method(self):
+        for kind in ('blank','dense','sparse'):
+            source=Image.new('RGB',(350,500),'white')
+            if kind=='dense': ImageDraw.Draw(source).rectangle((0,0,349,499),fill='black')
+            if kind=='sparse': ImageDraw.Draw(source).rectangle((33,71,280,432),fill='red')
+            ys,xs=np.where(np.min(np.asarray(source),axis=2)<245)
+            expected=source.crop((int(xs.min()),int(ys.min()),int(xs.max())+1,int(ys.max())+1)) if len(xs) else source.copy()
+            result,_=process(source,600,Settings(True,False,0,'Content + space'))
+            self.assertEqual(result.size,expected.size)
+            self.assertEqual(result.tobytes(),expected.tobytes())
+
+    def test_poll_rearms_once_after_handler_failure(self):
+        from app import App
+        from queue import Queue
+        from unittest.mock import Mock
+        app=App.__new__(App);app.root=Mock();app.events=Queue();app.poll_timer='existing'
+        app.draw_preview=Mock(side_effect=RuntimeError('draw failed'))
+        app.events.put(('preview','test'))
+        with self.assertRaisesRegex(RuntimeError,'draw failed'): app.poll()
+        app.root.after_cancel.assert_called_once_with('existing')
+        app.root.after.assert_called_once()
+
     def test_prepared_jpeg_invalidates_edits_source_and_respects_budget(self):
         from render_cache import RenderCache
         with tempfile.TemporaryDirectory() as folder:
@@ -468,8 +558,12 @@ class FocusWorkspaceTests(unittest.TestCase):
                 workspace.update_review_controls()
                 self.assertEqual(str(workspace.save_button['state']), 'normal')
                 for theme,color in [('Dark','#171b22'),('Light','#f6f7f9')]:
+                    workspace.preview_bounds=(0,0,200,300)
+                    workspace.crop_start=(4,5)
                     workspace.appearance.set(theme)
                     apply_theme(workspace)
+                    self.assertIsNone(workspace.preview_bounds)
+                    self.assertIsNone(workspace.crop_start)
                     self.assertEqual(workspace.palette['bg'],color)
                     self.assertEqual(len(workspace.pages),1)
                     self.assertEqual(workspace.current(),0)
@@ -493,6 +587,8 @@ class FocusWorkspaceTests(unittest.TestCase):
                 self.assertTrue(workspace.settings_window.winfo_exists())
             finally:
                 root.destroy()
+                workspace.preview_worker.close()
+                workspace.grid_worker.close()
                 workspace.session.cleanup()
 
 

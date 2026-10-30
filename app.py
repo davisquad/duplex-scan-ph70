@@ -11,6 +11,7 @@ import threading
 import uuid
 import sys
 import traceback
+from time import monotonic
 from concurrent.futures import ThreadPoolExecutor
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
@@ -18,6 +19,7 @@ from PIL import Image, ImageTk, ImageOps, ImageSequence
 from processing import Settings, process
 import backend
 from render_cache import cache
+from latest_worker import LatestWorker
 
 STATE = Path(os.environ.get('LOCALAPPDATA', str(Path.home())))/'DuplexScan'
 STATE.mkdir(parents=True, exist_ok=True)
@@ -87,9 +89,7 @@ def export_pages(pages, settings, target, kind, direct=False):
         with ThreadPoolExecutor(max_workers=1, thread_name_prefix='jpeg-save') as writer:
             pending = None
             for n, page in enumerate(pages, 1):
-                rendered = cache.jpeg(page, settings)
-                if rendered is None:
-                    rendered, _ = cache.render(page, settings, retain=False, consume=True)
+                rendered = cache.for_export(page, settings)
                 try:
                     if pending is not None: pending.result()
                     pending = writer.submit(write_page, n, page, rendered)
@@ -110,6 +110,8 @@ class App:
         self.session = tempfile.TemporaryDirectory(prefix='session-', dir=STATE)
         self.pages = []
         self.events = queue.Queue()
+        self.preview_worker = LatestWorker('scan-preview')
+        self.grid_worker = LatestWorker('scan-thumbnails')
         self.busy = False
         self.saving = False
         self.scanning = False
@@ -132,6 +134,7 @@ class App:
             self.cfg = json.loads((STATE/'settings.json').read_text())
         except (OSError, ValueError):
             pass
+        if not isinstance(self.cfg,dict): self.cfg = {}
         if self.cfg.get('capture_version',0) < 4:
             self.cfg.update(margin=.6,mode='Card outline',crop=True,deskew=True)
         self.driver = tk.StringVar(value=self.cfg.get('driver', 'twain'))
@@ -154,7 +157,7 @@ class App:
         build_focus_ui(self)
         root.protocol('WM_DELETE_WINDOW', self.close)
         root.report_callback_exception = self.ui_error
-        root.after(100, self.poll)
+        self.poll_timer = root.after(100, self.poll)
         root.after(300, self.refresh)
 
     def update_review_controls(self):
@@ -176,7 +179,8 @@ class App:
         self.status.set('Interface error: '+str(value))
         messagebox.showerror('Duplex Scan', str(value))
         # An error in rendering must not stop the queue that receives worker results.
-        self.root.after(100, self.poll)
+        if getattr(self,'poll_timer',None) is None:
+            self.poll_timer = self.root.after(100, self.poll)
 
     def restore(self, manifest):
         data = json.loads(Path(manifest).read_text())
@@ -283,6 +287,7 @@ class App:
 
     def render_grid(self):
         self.grid_timer = None
+        if self.saving: return
         try: settings = self.settings()
         except ValueError: return
         serial = self.grid_serial
@@ -300,17 +305,19 @@ class App:
             for key,page in work:
                 if serial != self.grid_serial: return
                 try:
-                    rendered,_ = cache.render(page,settings,cancelled=lambda:serial != self.grid_serial)
+                    rendered,_ = cache.preview(page,settings,(108,110),cancelled=lambda:serial != self.grid_serial)
                     if serial != self.grid_serial:
                         rendered.close()
                         return
-                    rendered.thumbnail((108,110),Image.Resampling.LANCZOS)
                     self.events.put(('grid', (serial,key,rendered)))
-                except Exception:
-                    self.events.put(('grid', (serial,key,Image.new('RGB',(80,100),'#d3dce8'))))
-        threading.Thread(target=render,daemon=True).start()
+                except Exception as exc:
+                    if serial == self.grid_serial:
+                        self.events.put(('grid_error', (serial,key,str(exc))))
+        self.grid_worker.submit(render)
 
     def schedule_preview(self):
+        self.preview_bounds = None
+        self.crop_start = None
         self.preview_serial += 1
         if self.preview_timer: self.root.after_cancel(self.preview_timer)
         self.preview_timer = self.root.after(120, self.preview)
@@ -346,7 +353,7 @@ class App:
                         source.thumbnail((1600, 1600), Image.Resampling.LANCZOS)
                         result, note = source.copy(), 'Original scan • Drag a rectangle to set a manual crop.'
                 else:
-                    result, note = cache.render(page, settings,cancelled=lambda:serial != self.preview_serial)
+                    result, note = cache.preview(page, settings,preview_size,cancelled=lambda:serial != self.preview_serial)
                 if serial != self.preview_serial:
                     result.close()
                     return
@@ -354,7 +361,7 @@ class App:
                 self.events.put(('preview', (serial, result, note, original, page.manual)))
             except Exception as exc:
                 self.events.put(('preview_error', (serial, str(exc))))
-        threading.Thread(target=render, daemon=True).start()
+        self.preview_worker.submit(render)
 
     def draw_preview(self, result):
         serial, rendered, note, original, manual = result
@@ -373,6 +380,7 @@ class App:
             self.canvas.create_rectangle(x+manual[0]*rendered.width, y+manual[1]*rendered.height,
                 x+manual[2]*rendered.width, y+manual[3]*rendered.height, outline='#2463eb', width=3)
         self.details.set(note)
+        rendered.close()
 
     def crop_begin(self, event):
         if self.busy or not self.preview_bounds: return
@@ -454,8 +462,11 @@ class App:
         self.update_review_controls()
 
     def poll(self):
+        if getattr(self,'poll_timer',None): self.root.after_cancel(self.poll_timer)
+        self.poll_timer = None
+        deadline = monotonic()+.012
         try:
-            while True:
+            while monotonic() < deadline:
                 event, data = self.events.get_nowait()
                 if event == 'preview': self.draw_preview(data)
                 elif event == 'grid':
@@ -468,6 +479,12 @@ class App:
                     rendered.close()
                 elif event == 'preview_error':
                     if data[0] == self.preview_serial: self.details.set('Preview unavailable: '+data[1])
+                elif event == 'grid_error':
+                    serial,key,error = data
+                    if serial == self.grid_serial:
+                        for tile,label in self.grid_slots.get(key,[]):
+                            self.grid_canvas.itemconfigure(label,text='Preview\nunavailable')
+                        self.details.set('Thumbnail unavailable: '+error)
                 elif event == 'scan_page':
                     self.pages.append(data)
                     self.dirty = True
@@ -506,7 +523,8 @@ class App:
                         self.clear_batch()
                         self.status.set(f'Saved JPEGs to {result}. Ready for the next batch.')
         except queue.Empty: pass
-        self.root.after(80, self.poll)
+        finally:
+            self.poll_timer = self.root.after(80, self.poll)
 
     def refresh(self):
         driver = self.driver.get()
@@ -629,8 +647,17 @@ class App:
         try:
             cfg = {key:getattr(self,key).get() for key in ['driver','device','dpi','source','size','color','margin','mode','appearance']}
             cfg.update(crop=self.autocrop.get(), deskew=self.deskew.get(), scan_flip=self.scan_flip.get(),capture_version=4)
-            (STATE/'settings.json').write_text(json.dumps(cfg, indent=2))
+            temporary = STATE/('settings-'+uuid.uuid4().hex+'.tmp')
+            try:
+                temporary.write_text(json.dumps(cfg, indent=2))
+                temporary.replace(STATE/'settings.json')
+            finally:
+                temporary.unlink(missing_ok=True)
         except OSError: pass
+        self.preview_serial += 1
+        self.grid_serial += 1
+        self.preview_worker.close()
+        self.grid_worker.close()
         self.root.destroy()
         try: self.session.cleanup()
         except OSError: pass

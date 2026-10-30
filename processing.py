@@ -128,9 +128,13 @@ def process(image, dpi, settings, rotation=0, manual=None, tilt=0):
             rect = (cx/scale,cy/scale,w/scale,h/scale,angle)
             note = 'Card edges detected; 5 mm working surround'
     elif settings.crop and settings.mode in ('Content + border','Content + space'):
-        ys,xs = np.where(np.min(np.asarray(image),axis=2)<245)
-        if len(xs):
-            x1,y1,x2,y2 = int(xs.min()),int(ys.min()),int(xs.max())+1,int(ys.max())+1
+        mask = np.min(np.asarray(image),axis=2)<245
+        # Find occupied rows/columns without allocating coordinates for every
+        # foreground pixel (hundreds of MB for a dark full-resolution scan).
+        rows = np.flatnonzero(mask.any(axis=1))
+        columns = np.flatnonzero(mask.any(axis=0))
+        if len(columns):
+            x1,y1,x2,y2 = int(columns[0]),int(rows[0]),int(columns[-1])+1,int(rows[-1])+1
             rect = ((x1+x2)/2,(y1+y2)/2,x2-x1,y2-y1,0)
             note = 'Content crop with scanned surround'
     correction = 0.0

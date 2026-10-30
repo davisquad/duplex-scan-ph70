@@ -1,0 +1,68 @@
+Duplex Scan 1.12 code and performance audit - 2026-10-30
+
+Scope
+Reviewed PH70 acquisition, atomic page publication, live delivery, processing,
+preview and thumbnail scheduling, caches, export, settings, UI error recovery,
+packaging, and installer checks. No scanner-quality settings were lowered.
+
+Changes
+1. Exact display-pixel cache (32 MB): repeated previews no longer require a
+   full-resolution copy and resize. It stores lossless display pixels made by
+   the existing Lanczos operation; export never uses preview pixels. Cache keys
+   cover source version, resolution, edits, finishing settings and display size.
+2. One running and one replaceable pending task per preview/thumbnail worker.
+   Rapid page selection and resize events no longer spawn accumulating threads.
+   Serial checks still reject superseded results; workers stop accepting work
+   on exit. Full-quality rendering remains serialized to limit working memory.
+3. Export rechecks prepared JPEGs after a render wait, avoiding redundant JPEG
+   encoding when background preparation finishes during that wait.
+4. Content + space detection finds occupied rows and columns instead of
+   allocating x/y coordinates for every foreground pixel. Same crop bounds.
+5. Cached RGB memory accounting includes four-byte pixel slots, not just the
+   three color channels. Budgets: 256 MB pixels, 128 MB JPEGs, 32 MB views.
+6. Manual crop coordinates are invalidated immediately when scheduling a new
+   preview, preventing a drag against the previous page/view.
+7. Event handling yields after a bounded processing interval. The poll timer
+   is rearmed in finally and interface errors cannot create duplicate loops.
+8. Thumbnail failures are visibly identified and remain retryable instead of
+   storing a blank placeholder as a successfully completed image.
+9. Settings are replaced atomically on normal exit. Non-object JSON settings
+   fall back to defaults instead of failing at startup.
+
+Measurements (local PC, not guaranteed timings)
+Eight existing 600-DPI scans, repeated 700x700 fitted previews, three runs:
+  Previous implementation: 0.2491 / 0.2486 / 0.2484 seconds per eight previews.
+  New cache:               0.0034 / 0.0030 / 0.0029 seconds per eight previews.
+These measure prepared-preview retrieval and resizing, excluding GUI timers,
+screen painting, and first-time processing. Preview pixels and export JPEG
+bytes were identical for all eight scans.
+
+Dense 2000x3000 synthetic image, Content + space mode, single comparison:
+  Previous: 0.1524 seconds, 97.28 MB peak tracemalloc allocation.
+  New:      0.1081 seconds, 34.37 MB peak tracemalloc allocation.
+Output pixels were identical. tracemalloc is not total process RAM. This
+optimization affects the optional content crop mode, not default Card outline.
+
+Validation
+34 automated tests cover image margins/skew, exact exports, prepared-JPEG
+invalidation, display-cache equality/budget, pending-work replacement, export
+wait races, crop bounds, error recovery, live capture ordering, stop recovery,
+and UI controls. Existing installer workflow checks clean install, reinstall,
+packaged initialization, shortcuts, and uninstall.
+
+Remaining limits / deliberately unchanged
+- First-time physical-edge detection, source decoding, and bicubic deskew still
+  cost CPU time. No lower-resolution analysis, simpler interpolation, JPEG
+  quality changes, or repeated JPEG decoding were used to obtain speed gains.
+- Cache budgets exclude source/working images, Python overhead, and Tk images.
+  Large batches can exceed cache capacity; Save then prepares missing pages.
+- Drawing and queue polling have finite latency. Benchmarks above do not claim
+  scanner throughput or end-to-end UI acceleration by the same ratio.
+- Native bitmap capture writes substantial temporary data. It remains lossless
+  and originals are retained until normal app exit to preserve recovery paths.
+- A failed export can leave already-completed JPEGs; originals remain for retry.
+  A retry may create additional uniquely named files.
+- No fresh physical feeder batch was run for this audit. Mocked capture and a
+  real child-process delivery test cover software behavior, not driver timing.
+- Installer remains unsigned; code signing remains a distribution limitation.
+- No personal scan images or user settings are included in the repository.

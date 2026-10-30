@@ -1,6 +1,6 @@
 # Duplex Scan for the PH70
 
-A local Windows scanning app for the Visioneer Patriot PH70 duplex scanner. Version **1.11.0**.
+A local Windows scanning app for the Visioneer Patriot PH70 duplex scanner. Version **1.12.0**.
 
 ![App icon](DuplexScan-Neon.png)
 
@@ -13,13 +13,13 @@ A local Windows scanning app for the Visioneer Patriot PH70 duplex scanner. Vers
 - Modern Focus workspace with a large preview, batch thumbnails, compact finishing controls, and selectable Light, Dark, or System appearance (Light by default).
 - High-quality JPEGs saved directly to `Pictures/Scanned Photos` under the current user's home directory.
 - Batch clears after successful export; failed saves retain the scans for retry.
-- Full-quality render reuse, a 256 MB cache limit, and background preview processing.
+- Full-quality render reuse (256 MB budget), exact resized previews (32 MB budget), and two bounded background workers. RGB cache accounting includes pixel padding. Working images and UI objects use additional memory.
 - Finished JPEGs are prepared during background review and retained in a separate 128 MB cache, so Save usually writes ready bytes without repeating processing or encoding. Changes to images or finishing settings invalidate those results. The cache clears with the batch; JPEG quality remains 95 with no chroma subsampling.
 - Image/multipage TIFF import, manual cropping, rotation, and fine tilt.
 
 ## Install on Windows (no Python required)
 
-**[Download the Windows installer](https://github.com/davisquad/duplex-scan-ph70/releases/latest/download/DuplexScan-Setup-1.11.0-x64.exe)**
+**[Download the Windows installer](https://github.com/davisquad/duplex-scan-ph70/releases/latest/download/DuplexScan-Setup-1.12.0-x64.exe)**
 
 Open the setup file and click **Install**. It installs for your Windows account, creates desktop and Start menu shortcuts, and opens the app. It downloads and verifies the NAPS2 engine automatically (internet required, about 70 MB). No manual extraction, Python installation, or separate NAPS2 setup is needed.
 
@@ -82,7 +82,11 @@ For a local installer build, after the PyInstaller command above:
 & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer/DuplexScan.iss
 ```
 
-Output: `installer-output/DuplexScan-Setup-1.11.0-x64.exe`. NAPS2 is downloaded directly from its official release during installation and checked against a pinned SHA-256 digest. Keep that URL, version, archive size, and digest together when updating the engine.
+Output: `installer-output/DuplexScan-Setup-1.12.0-x64.exe`. NAPS2 is downloaded directly from its official release during installation and checked against a pinned SHA-256 digest. Keep that URL, version, archive size, and digest together when updating the engine.
+
+## Audit
+
+See [AUDIT.txt](AUDIT.txt) for the 1.12 performance audit, measured improvements, quality checks, and remaining limitations.
 
 ## Tests
 
@@ -90,7 +94,7 @@ Output: `installer-output/DuplexScan-Setup-1.11.0-x64.exe`. NAPS2 is downloaded 
 .\.venv\Scripts\python.exe -m unittest test_app -q
 ```
 
-The 28 tests cover edge preservation, skew correction, margins, cache behavior, capture callbacks, image export, and save recovery. Tests use generated images and mocked scanner hardware, not personal scans. Real PH70 capture was separately exercised during development; the recent performance improvements have not been timed through a fresh complete hardware batch.
+The 34 tests cover edge preservation, skew correction, margins, cache behavior, capture callbacks, image export, and save recovery. Tests use generated images and mocked scanner hardware, not personal scans. Real PH70 capture was separately exercised during development; the recent performance improvements have not been timed through a fresh complete hardware batch.
 
 ## Privacy and limitations
 

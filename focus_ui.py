@@ -62,7 +62,7 @@ def apply_theme(app):
 
 def build_focus_ui(app):
     root = app.root
-    root.title('Duplex Scan 1.11.0 • Focus workspace')
+    root.title('Duplex Scan 1.12.0 • Focus workspace')
     root.geometry('1180x800')
     root.minsize(960,720)
     app.appearance = tk.StringVar(value=app.cfg.get('appearance', 'Light'))

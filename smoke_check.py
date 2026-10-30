@@ -28,6 +28,8 @@ def run(report_path):
         assert str(workspace.save_button['state']) == 'disabled'
         assert workspace.settings_window.winfo_exists()
         root.destroy()
+        workspace.preview_worker.close()
+        workspace.grid_worker.close()
         workspace.session.cleanup()
         result['ok'] = True
     except Exception as exc:
